@@ -7,8 +7,8 @@ from PIL import Image
 target_w, target_h = 640, 480
 
 # images input and output paths
-input_path = 'D:/PhD/Code/cocodataset/images/'
-output_path = 'D:/PhD/Code/cocodataset/images_rescaled/'
+input_path = '/cocodataset/images/'
+output_path = '/cocodataset/images_rescaled/'
 
 print(f"Starting to process {len(os.listdir(input_path))} images")
 
