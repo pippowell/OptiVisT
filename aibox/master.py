@@ -28,14 +28,17 @@ Usage - formats:
                                  yolov5s_paddle_model       # PaddlePaddle
 """
 
+import math
 import os
 import platform
 import sys
 from pathlib import Path
 import keyboard
 import itertools
+import numpy as np
 
 import torch
+import deepsort
 
 print(torch.version.cuda)
 
@@ -193,14 +196,13 @@ def run(
     stride_obj, names_obj, pt_obj = model_obj.stride, model_obj.names, model_obj.pt
     stride_hand, names_hand, pt_hand = model_hand.stride, model_hand.names, model_hand.pt
     imgsz = check_img_size(imgsz, s=stride_obj)  # check image size
+    deepsort1 = deepsort.ds_init()
 
     # Dataloader
     bs = 1  # batch_size
     view_img = check_imshow(warn=True)
     dataset = LoadStreams(source, img_size=imgsz, stride=stride_obj, auto=True, vid_stride=vid_stride)
     bs = len(dataset)
-    vid_path, vid_writer = [None] * bs, [None] * bs
-
     vid_path, vid_writer = [None] * bs, [None] * bs
 
     # Run inference
@@ -220,6 +222,7 @@ def run(
 
     # Milad e
     for path, im, im0s, vid_cap, s in dataset:
+
         with dt[0]:
             im_obj = torch.from_numpy(im).to(model_obj.device)
             im_obj = im_obj.half() if model_obj.fp16 else im_obj.float()  # uint8 to fp16/32
@@ -244,11 +247,6 @@ def run(
             pred_obj = non_max_suppression(pred_obj, conf_thres, iou_thres, classes_obj, agnostic_nms, max_det=max_det)
             pred_hand = non_max_suppression(pred_hand, conf_thres, iou_thres, classes_hand, agnostic_nms, max_det=max_det)
 
-        print(len(pred_obj))
-        print(len(pred_hand))
-
-        p, im0, frame = path[0], im0s[0].copy(), dataset.count
-        s += f'{0}: '
         p, im0, frame = path[0], im0s[0].copy(), dataset.count
         s += f'{0}: '
 
@@ -337,11 +335,26 @@ def run(
             
             
             for *xyxy, conf, cls in reversed(boxes):
-                
+
+                bbox = np.array([tensor.cpu().detach().numpy() for tensor in xyxy])
+                x1, y1, x2, y2 = bbox[0], bbox[1], bbox[2], bbox[3]
+                x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+                conf = math.ceil((conf*100))/100
+                cx, cy = int((x1+x2)/2), int((y1+y2)/2)
+                bbox_width = abs(x1-x2)
+                bbox_height = abs(y1-y2)
+                xcycwh = [cx, cy, bbox_width, bbox_height]
+                bbox_final = torch.tensor(xcycwh)
+                conf_final = torch.tensor(conf)
+                id = int(cls)
+                outputs = deepsort1.update(bbox_final, conf_final, id, im)
+                deepsort_box = outputs[:,:4]
+                object_id = outputs[:, -1]
+
                 if save_img or save_crop or view_img:  # Add bbox to image
                     c = int(cls)  # integer class
-                    label = None if hide_labels else (master_label[c] if hide_conf else f'{master_label[c]} {conf:.2f}')
-                    annotator.box_label(xyxy, label, color=colors(c, True))
+                    label = None if hide_labels else (master_label[c] if hide_conf else f'{master_label[c]} {conf:.2f} {object_id}')
+                    annotator.box_label(deepsort_box, label, color=colors(c, True))
 
         # Stream results
         im0 = annotator.result()
