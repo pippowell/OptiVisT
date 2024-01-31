@@ -43,6 +43,9 @@ if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
+print(torch.version.cuda)
+print(f"CUDA available: {torch.cuda.is_available()}")
+
 from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (LOGGER, Profile, check_file, check_img_size, check_imshow, check_requirements, colorstr, cv2,
@@ -51,6 +54,11 @@ from utils.plots import Annotator, colors, save_one_box
 from utils.torch_utils import select_device, smart_inference_mode
 
 from bracelet import navigate_hand
+
+from deep_sort_realtime.deepsort_tracker import DeepSort
+from utils.sort import *
+
+import numpy as np
 
 obj_name_dict = {
 0: "person",
@@ -191,6 +199,10 @@ def run(
     stride_hand, names_hand, pt_hand = model_hand.stride, model_hand.names, model_hand.pt
     imgsz = check_img_size(imgsz, s=stride_obj)  # check image size
 
+    # Load object tracker
+    tracker_obj = DeepSort(max_age=5)
+    tracker_hand = DeepSort(max_age=5)
+
     # Dataloader
     bs = 1  # batch_size
     if webcam:
@@ -209,11 +221,16 @@ def run(
     bboxs_hands = []  # Initialize a list to store bounding boxes for hands
     bboxs_objs = [] # Initialize a list to store bounding boxes for objects
 
+    tracker_bboxs_hands = []
+    tracker_bboxs_objs = []
+
     horizontal_in, vertical_in = False, False
     target_entered = False
     #target_obj = 0
     check = 1
     check_dur = 0
+
+    mot_tracker = Sort()
 
     # Milad e
     for path, im, im0s, vid_cap, s in dataset:
@@ -240,6 +257,54 @@ def run(
         with dt[2]:
             pred_obj = non_max_suppression(pred_obj, conf_thres, iou_thres, classes_obj, agnostic_nms, max_det=max_det)
             pred_hand = non_max_suppression(pred_hand, conf_thres, iou_thres, classes_hand, agnostic_nms, max_det=max_det)
+
+        #input(pred_hand)
+        #input(pred_hand[0].cpu().detach().numpy())
+
+        """
+        Params:
+        dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
+        Requires: this method must be called once for each frame even with empty detections (use np.empty((0, 5)) for frames without detections).
+        Returns the a similar array, where the last column is the object ID.
+
+        Note: The number of objects returned may differ from the number of detections provided.
+        """
+
+        #detections = [list(x.cpu().detach().numpy()) for x in pred_hand]
+        detections = np.array([x.cpu().detach().numpy() for x in pred_hand], ndmin = 2)
+        print(detections)
+        #input(detections)
+        
+        #if detections == [[]]:
+        if detections.size == 0:
+
+            detections = np.empty((0,5))
+            print(detections, detections.shape)
+            input()
+            track_bbs_ids = mot_tracker.update(detections)
+        else:
+            detections = np.reshape(detections[:, :, :-1], (len(pred_hand), 5))
+            print(detections, detections.shape)
+            track_bbs_ids = mot_tracker.update(detections)
+
+        #detections = [list(x.detach().cpu().numpy()) for x in pred_hand][0]       
+
+        #detections = [list(x.detach().cpu().numpy()) for x in pred_hand][0]
+        #detections = pred_hand.numpy()
+        #if np.shape(detections) != (1,0,6):
+        #if detections != []:
+        #    detections = np.array(detections[0])
+        #    input(detections)
+        #    track_bbs_ids = mot_tracker.update(detections)
+        
+        '''tracker_bboxs_hands = [(bbox, conf, int(cls))]
+        tracker_bboxs_hands = tracker_obj.update_tracks(tracker_bboxs_obj, frame=im_obj)
+
+        for track in tracks_obj:
+            if not track.is_confirmed():
+                continue
+            track_id = track.track_id
+            ltrb = track.to_ltrb()'''
 
         annotators_list = []
 
@@ -303,10 +368,26 @@ def run(
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
                         label = None if hide_labels else (curr_labels[c] if hide_conf else f'{curr_labels[c]} {conf:.2f}')
-                        annotator.box_label(xyxy, label, color=colors(c, True))
+                        #annotator.box_label(xyxy, label, color=colors(c, True))
                     # if save_crop:
                     #     save_one_box(xyxy, imc, file=save_dir / 'crops' / names_obj[c] / f'{p.stem}.jpg', BGR=True)
+                        
+        #tracker_bboxs_hands = [(x['bbox'], x['confidence'].item(), x['label']) for x in bboxs_hands]
+        #tracker_bboxs_hands = [pred_hand]
+        #if len(tracker_bboxs_hands) > 0:
+        #    input(tracker_bboxs_hands)
+        #tracks_hands = tracker_hand.update_tracks(tracker_bboxs_hands, frame=im_hand)
         
+        #detections = numpy.array([x['bbox'] for x in bboxs_hands])
+        #track_bbs_ids = mot_tracker.update(detections)
+
+        '''for track in tracks_hands:
+            if not track.is_confirmed():
+                continue
+            track_id = track.track_id
+            ltrb = track.to_ltrb()
+        '''
+
         # Process object predictions
         for i, det in enumerate(pred_obj):  # per image
             curr_labels = names_obj
@@ -352,12 +433,31 @@ def run(
                     #     with open(f'{txt_path}.txt', 'a') as f:
                     #         f.write(('%g ' * len(line)).rstrip() % line + '\n')
 
+                    tracker_bboxs_objs.append((bbox, conf, int(cls)))
+                    tracker_bboxs_obj = [(bbox, conf, int(cls))]
+                    tracks_obj = tracker_obj.update_tracks(tracker_bboxs_obj, frame=im_obj)
+
+                    for track in tracks_obj:
+                        if not track.is_confirmed():
+                            continue
+                        track_id = track.track_id
+                        ltrb = track.to_ltrb()
+
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = None if hide_labels else (curr_labels[c] if hide_conf else f'{curr_labels[c]} {conf:.2f}')
+                        label = None if hide_labels else (curr_labels[c] if hide_conf else f'index: {track_id}, conf: {curr_labels[c]} {conf:.2f}')
                         annotator.box_label(xyxy, label, color=colors(c, True))
                     # if save_crop:
                     #     save_one_box(xyxy, imc, file=save_dir / 'crops' / names_obj[c] / f'{p.stem}.jpg', BGR=True)
+
+        # Prepare bounding boxes for tracking
+        # bbs expected to be a list of detections, each in tuples of ( [left,top,w,h], confidence, detection_class )
+        #tracker_bboxs_objs = [(x['bbox'], x['confidence'], x['class']) for x in bboxs_objs]
+        #tracker_bboxs_hands = [(x['bbox'], x['confidence'], x['class']) for x in bboxs_objs]
+
+        # Track detections
+        #tracks_obj = tracker_obj.update_tracks(tracker_bboxs_objs, frame=im_obj)
+        #tracks_hand = tracker_obj.update_tracks(tracker_bboxs_hands, frame=im_hand)
 
         # Stream results
         im0 = annotator.result()
