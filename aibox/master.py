@@ -232,6 +232,8 @@ def run(
 
     mot_tracker = Sort()
 
+    track_id = -1
+
     # Milad e
     for path, im, im0s, vid_cap, s in dataset:
         with dt[0]:
@@ -274,18 +276,24 @@ def run(
         detections = np.array([x.cpu().detach().numpy() for x in pred_hand], ndmin = 2)
         print(detections)
         #input(detections)
-        
+
         #if detections == [[]]:
         if detections.size == 0:
 
             detections = np.empty((0,5))
             print(detections, detections.shape)
-            input()
             track_bbs_ids = mot_tracker.update(detections)
         else:
-            detections = np.reshape(detections[:, :, :-1], (len(pred_hand), 5))
+            try:
+                detections = np.reshape(detections[:, :, :-1], (len(pred_hand), 5))
+            except:
+                input(pred_hand)
             print(detections, detections.shape)
             track_bbs_ids = mot_tracker.update(detections)
+            print(track_bbs_ids, type(track_bbs_ids))
+            if track_bbs_ids.size > 0:
+                track_id = track_bbs_ids[0][4]
+            #input()
 
         #detections = [list(x.detach().cpu().numpy()) for x in pred_hand][0]       
 
@@ -367,8 +375,9 @@ def run(
 
                     if save_img or save_crop or view_img:  # Add bbox to image
                         c = int(cls)  # integer class
-                        label = None if hide_labels else (curr_labels[c] if hide_conf else f'{curr_labels[c]} {conf:.2f}')
-                        #annotator.box_label(xyxy, label, color=colors(c, True))
+                        label = None if hide_labels else (curr_labels[c] if hide_conf else f'{curr_labels[c]} {conf:.2f} ID: {track_id}')
+                        #label = None if hide_labels else (curr_labels[c] if hide_conf else f'{curr_labels[c]} {conf:.2f}')
+                        annotator.box_label(xyxy, label, color=colors(c, True))
                     # if save_crop:
                     #     save_one_box(xyxy, imc, file=save_dir / 'crops' / names_obj[c] / f'{p.stem}.jpg', BGR=True)
                         
