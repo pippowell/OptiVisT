@@ -1,0 +1,5 @@
+int_top: 86
+int_bottom: 86
+int_left: 83
+int_right: 83
+avg_int: 84
